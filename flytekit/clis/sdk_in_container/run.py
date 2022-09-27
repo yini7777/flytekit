@@ -35,6 +35,7 @@ from flytekit.models import literals
 from flytekit.models.interface import Variable
 from flytekit.models.literals import Blob, BlobMetadata, Primitive, Union
 from flytekit.models.types import LiteralType, SimpleType
+from flytekit.models.execution import ClusterAssignment
 from flytekit.remote.executions import FlyteWorkflowExecution
 from flytekit.tools import module_loader, script_mode
 from flytekit.tools.script_mode import _find_project_root
@@ -427,6 +428,13 @@ def get_workflow_command_base_params() -> typing.List[click.Option]:
             default=False,
             help="Whether dump a code snippet instructing how to load the workflow execution using flyteremote",
         ),
+        click.Option(
+            param_decls=["--cluster-pool", "cluster_pool"],
+            required=False,
+            type=str,
+            default="",
+            help="Assign newly created execution to a given cluster pool",
+        ),
     ]
 
 
@@ -555,6 +563,12 @@ def run_command(ctx: click.Context, entity: typing.Union[PythonFunctionWorkflow,
             # options are only passed for the execution. This is to prevent errors when registering a duplicate workflow
             # It is assumed that the users expectations is to override the service account only for the execution
             options = Options.default_from(k8s_service_account=service_account)
+
+        cluster_pool = run_level_params.get("cluster_pool")
+        if cluster_pool:
+            if not options:
+                options = Options()
+            options.cluster_assignment = ClusterAssignment(cluster_pool=cluster_pool)
 
         execution = remote.execute(
             remote_entity,

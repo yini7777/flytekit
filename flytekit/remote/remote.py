@@ -747,6 +747,7 @@ class FlyteRemote(object):
                     auth_role=None,
                     max_parallelism=options.max_parallelism,
                     security_context=options.security_context,
+                    cluster_assignment=options.cluster_assignment,
                 ),
                 literal_inputs,
             )
