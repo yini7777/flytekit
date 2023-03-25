@@ -13,17 +13,17 @@
 
 """
 
-
+import inspect
 from abc import ABC
 from collections import OrderedDict
 from enum import Enum
-from typing import Any, Callable, List, Optional, TypeVar, Union, cast
+from typing import Any, Callable, List, Optional, Tuple, TypeVar, Union, cast
 
 from flytekit.core.base_task import Task, TaskResolverMixin
 from flytekit.core.context_manager import ExecutionState, FlyteContext, FlyteContextManager
 from flytekit.core.docstring import Docstring
 from flytekit.core.interface import transform_function_to_interface
-from flytekit.core.promise import VoidPromise, translate_inputs_to_literals
+from flytekit.core.promise import Promise, VoidPromise, translate_inputs_to_literals
 from flytekit.core.python_auto_container import PythonAutoContainerTask, default_task_resolver
 from flytekit.core.tracker import extract_task_module, is_functools_wrapped_module_level, isnested, istestfunction
 from flytekit.core.workflow import (
@@ -93,6 +93,7 @@ class PythonFunctionTask(PythonAutoContainerTask[T]):  # type: ignore
     class ExecutionBehavior(Enum):
         DEFAULT = 1
         DYNAMIC = 2
+        ASYNC = 3
 
     def __init__(
         self,
@@ -161,6 +162,10 @@ class PythonFunctionTask(PythonAutoContainerTask[T]):  # type: ignore
         handle dynamic tasks or you will no longer be able to use the task as a dynamic task generator.
         """
         if self.execution_mode == self.ExecutionBehavior.DEFAULT:
+            if  inspect.iscoroutinefunction(self._task_function) and getattr(self._task_function, "__is_eager__", False):
+                # if the task is a coroutine function, inject the context object so that the async_entity
+                # has access to the FlyteContext.
+                kwargs["async_ctx"] = FlyteContextManager.current_context()
             return exception_scopes.user_entry_point(self._task_function)(**kwargs)
         elif self.execution_mode == self.ExecutionBehavior.DYNAMIC:
             return self.dynamic_execute(self._task_function, **kwargs)

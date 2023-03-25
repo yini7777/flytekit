@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import collections
+import inspect
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast
 
@@ -1107,6 +1108,9 @@ def flyte_entity_call_handler(
                 return None
             else:
                 raise Exception(f"Received an output when workflow local execution expected None. Received: {result}")
+
+        if inspect.iscoroutine(result):
+            return result
 
         if (1 < expected_outputs == len(cast(Tuple[Promise], result))) or (
             result is not None and expected_outputs == 1

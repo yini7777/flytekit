@@ -1,5 +1,7 @@
+import asyncio
 import contextlib
 import datetime as _datetime
+import inspect
 import os
 import pathlib
 import subprocess
@@ -88,6 +90,11 @@ def _dispatch_execute(
         # Decorate the dispatch execute function before calling it, this wraps all exceptions into one
         # of the FlyteScopedExceptions
         outputs = _scoped_exceptions.system_entry_point(task_def.dispatch_execute)(ctx, idl_input_literals)
+        if inspect.iscoroutine(outputs):
+            # Handle eager-mode (async) tasks
+            logger.info("Output is a coroutine")
+            outputs = asyncio.run(outputs)
+
         # Step3a
         if isinstance(outputs, VoidPromise):
             logger.warning("Task produces no outputs")

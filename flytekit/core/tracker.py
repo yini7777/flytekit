@@ -1,15 +1,28 @@
 import importlib
-import importlib as _importlib
 import inspect
-import inspect as _inspect
 import os
+import sys
 import typing
+from pathlib import Path
 from types import ModuleType
-from typing import Callable, Tuple, Union
+from typing import Callable, Optional, Tuple, Union
 
 from flytekit.configuration.feature_flags import FeatureFlags
 from flytekit.exceptions import system as _system_exceptions
 from flytekit.loggers import logger
+
+
+def import_module_from_file(module_name, file):
+    try:
+        spec = importlib.util.spec_from_file_location(module_name, file)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except AssertionError as exc:
+        # handle where we can't determine the module of functions within the module
+        return importlib.import_module(module_name)
+    except Exception as exc:
+        raise ModuleNotFoundError(f"Module from file {file} cannot be loaded") from exc
 
 
 class InstanceTrackingMeta(type):
@@ -23,17 +36,43 @@ class InstanceTrackingMeta(type):
     """
 
     @staticmethod
+    def _get_module_from_main(globals) -> Optional[str]:
+        curdir = str(Path().absolute())
+        file = globals.get("__file__")
+        if file is None:
+            return None
+        if not file.startswith(curdir):
+            return None
+        module_components = file.replace(f"{curdir}/", "").replace(".py", "").split("/")
+        module_name = ".".join(module_components)
+        if len(module_components) == 0:
+            return None
+
+        # make sure current directory is in the PYTHONPATH.
+        sys.path.insert(0, curdir)
+        return import_module_from_file(module_name, file)
+
+    @staticmethod
     def _find_instance_module():
-        frame = _inspect.currentframe()
+        frame = inspect.currentframe()
         while frame:
             if frame.f_code.co_name == "<module>" and "__name__" in frame.f_globals:
-                return frame.f_globals["__name__"]
+                if frame.f_globals["__name__"] == "__main__":
+                    # if the remote_deploy command is invoked in the same module as where
+                    # the app is defined,
+                    mod = InstanceTrackingMeta._get_module_from_main(frame.f_globals)
+                    if mod is None:
+                        return None, None
+                    return mod.__name__, mod.__file__
+                return frame.f_globals["__name__"], frame.f_globals["__file__"]
             frame = frame.f_back
-        return None
+        return None, None
 
     def __call__(cls, *args, **kwargs):
         o = super(InstanceTrackingMeta, cls).__call__(*args, **kwargs)
-        o._instantiated_in = InstanceTrackingMeta._find_instance_module()
+        mod_name, mod_file = InstanceTrackingMeta._find_instance_module()
+        o._instantiated_in = mod_name
+        o._module_file = mod_file
         return o
 
 
@@ -51,6 +90,7 @@ class TrackedInstance(metaclass=InstanceTrackingMeta):
 
     def __init__(self, *args, **kwargs):
         self._instantiated_in = None
+        self._module_file = None
         self._lhs = None
         super().__init__(*args, **kwargs)
 
@@ -77,7 +117,7 @@ class TrackedInstance(metaclass=InstanceTrackingMeta):
             raise _system_exceptions.FlyteSystemException(f"Object {self} does not have an _instantiated in")
 
         logger.debug(f"Looking for LHS for {self} from {self._instantiated_in}")
-        m = _importlib.import_module(self._instantiated_in)
+        m = importlib.import_module(self._instantiated_in)
         for k in dir(m):
             try:
                 if getattr(m, k) is self:
@@ -91,6 +131,23 @@ class TrackedInstance(metaclass=InstanceTrackingMeta):
                 # Since dataframes aren't registrable entities to begin with we swallow any errors they raise and
                 # continue looping through m.
                 logger.warning("Caught ValueError {} while attempting to auto-assign name".format(err))
+
+        # try to find object in module when the tracked instance is defined in the __main__ module
+        module = import_module_from_file(self._instantiated_in, self._module_file)
+        for k in dir(module):
+            try:
+                candidate = getattr(module, k)
+                # consider the variable equivalent to self if it's of the same type, name
+                if (
+                    type(candidate) == type(self)
+                    and candidate.__dict__.get("name") == self.__dict__.get("name")
+                    and candidate.instantiated_in == self.instantiated_in
+                ):
+                    self._lhs = k
+                    return k
+            except ValueError as err:
+                logger.warning(f"Caught ValueError {err} while attempting to auto-assign name")
+                pass
 
         logger.error(f"Could not find LHS for {self} in {self._instantiated_in}")
         raise _system_exceptions.FlyteSystemException(f"Error looking for LHS in {self._instantiated_in}")

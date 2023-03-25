@@ -1,6 +1,8 @@
+import asyncio
 import datetime
 import functools
 import importlib
+import inspect
 import json
 import logging
 import os
@@ -634,6 +636,9 @@ def run_command(ctx: click.Context, entity: typing.Union[PythonFunctionWorkflow,
 
         if not ctx.obj[REMOTE_FLAG_KEY]:
             output = entity(**inputs)
+            if inspect.iscoroutine(output):
+                # TODO: make eager mode workflows run with local-mode
+                output = asyncio.run(output)
             click.echo(output)
             return
 
