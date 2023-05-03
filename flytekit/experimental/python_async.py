@@ -231,7 +231,12 @@ def eager(
         return out
     
     wrapper.__is_eager__ = True  #  HACK!
-    return task(wrapper, secret_requests=[Secret(group=SECRET_GROUP, key=SECRET_KEY)], **kwargs)
+    return task(
+        wrapper,
+        secret_requests=[Secret(group=SECRET_GROUP, key=SECRET_KEY)],
+        disable_deck=False,
+        **kwargs,
+    )
 
 
 def prepare_remote(remote: Optional[FlyteRemote], ctx: FlyteContext, force_remote: bool) -> Optional[FlyteRemote]:
@@ -292,7 +297,7 @@ def internal_remote(remote: FlyteRemote) -> FlyteRemote:
                 insecure=remote.config.platform.insecure,
                 auth_mode="client_credentials",
                 client_id=remote.config.platform.client_id,
-                client_credentials_secret=client_secret,
+                client_credentials_secret=remote.config.platform.client_credentials_secret or client_secret
             ),
         ),
         default_domain=remote.default_domain,

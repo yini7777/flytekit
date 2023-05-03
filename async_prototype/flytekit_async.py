@@ -14,26 +14,25 @@ from flytekit.configuration import Config, PlatformConfig
 from flytekit.experimental import eager
 from flytekit.remote import FlyteRemote
 
-CACHE_VERSION = "4"
 
 class CustomException(Exception): ...
 
 BestModel = NamedTuple("BestModel", model=LogisticRegression, metric=float)
 
 
-@task(cache=True, cache_version=CACHE_VERSION)
+@task
 def get_data() -> pd.DataFrame:
     """Get the wine dataset."""
     return load_wine(as_frame=True).frame
 
 
-@task(cache=True, cache_version=CACHE_VERSION)
+@task
 def process_data(data: pd.DataFrame) -> pd.DataFrame:
     """Simplify the task from a 3-class to a binary classification problem."""
     return data.assign(target=lambda x: x["target"].where(x["target"] == 0, 1))
 
 
-@task(cache=True, cache_version=CACHE_VERSION)
+@task
 def train_model(data: pd.DataFrame, hyperparameters: dict) -> LogisticRegression:
     """Train a model on the wine dataset."""
     features = data.drop("target", axis="columns")
@@ -55,20 +54,15 @@ remote = FlyteRemote(
     config=Config(
         platform=PlatformConfig(
             endpoint="development.uniondemo.run",
-            auth_mode="Pkce",
+            auth_mode="client_credentials",
             client_id="flytepropeller",
-            insecure=False,
         ),
     ),
     default_project="flytesnacks",
     default_domain="development",
 )
 
-@eager(
-    remote=remote,
-    secret_requests=[Secret(group="eager-mode", key="client_secret")],
-    disable_deck=False,
-)
+@eager(remote=remote)
 async def main() -> BestModel:
     data = await get_data()
     processed_data = await process_data(data=data)
