@@ -14,23 +14,7 @@ from flytekit.configuration import Config, PlatformConfig
 from flytekit.experimental import eager
 from flytekit.remote import FlyteRemote
 
-CACHE_VERSION = "3"
-
-
-remote = FlyteRemote(
-    # config=Config.for_sandbox(),
-    config=Config(
-        platform=PlatformConfig(
-            endpoint="development.uniondemo.run",
-            auth_mode="Pkce",
-            client_id="flytepropeller",
-            insecure=False,
-        ),
-    ),
-    default_project="flytesnacks",
-    default_domain="development",
-    data_upload_location="s3://flyte-development-data/data",
-)
+CACHE_VERSION = "4"
 
 class CustomException(Exception): ...
 
@@ -65,10 +49,24 @@ def evaluate_model(data: pd.DataFrame, model: LogisticRegression) -> float:
     return float(accuracy_score(target, model.predict(features)))
 
 
+Config.for_sandbox
+remote = FlyteRemote(
+    # config=Config.for_sandbox(),
+    config=Config(
+        platform=PlatformConfig(
+            endpoint="development.uniondemo.run",
+            auth_mode="Pkce",
+            client_id="flytepropeller",
+            insecure=False,
+        ),
+    ),
+    default_project="flytesnacks",
+    default_domain="development",
+)
+
 @eager(
     remote=remote,
-    force_remote=True,
-    secret_requests=[Secret(group="async-client-secret", key="client_secret")],
+    secret_requests=[Secret(group="eager-mode", key="client_secret")],
     disable_deck=False,
 )
 async def main() -> BestModel:

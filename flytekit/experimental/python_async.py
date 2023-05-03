@@ -1,15 +1,19 @@
 import asyncio
 from contextlib import contextmanager
 from functools import partial, wraps
-from typing import Any, Optional
+from typing import Any, List, Optional
 
-from flytekit import current_context, Deck
+from flytekit import current_context, Deck, Secret
 from flytekit.loggers import logger
 from flytekit.configuration import DataConfig, PlatformConfig, S3Config
 from flytekit.core.base_task import PythonTask
 from flytekit.core.context_manager import ExecutionState, FlyteContext, FlyteContextManager
 from flytekit.core.task import task
 from flytekit.remote import FlyteRemote
+
+
+SECRET_GROUP = "eager-mode"
+SECRET_KEY = "client_secret"
 
 
 class AsyncEntity:
@@ -57,10 +61,6 @@ class AsyncEntity:
 
         task = self.remote.fetch_task(name=task_name)
         execution = self.remote.execute(task, inputs=kwargs, type_hints=self.task.python_interface.inputs)
-        # try:
-        #     execution = self.remote.execute(task, inputs=kwargs)
-        # except:
-        #     execution = self.remote.execute(task, inputs=kwargs, type_hints=self.task.python_interface.inputs)
 
         url = self.remote.generate_console_url(execution)
         print(url)
@@ -74,10 +74,6 @@ class AsyncEntity:
         outputs = {}
         for key, type_ in self.task.python_interface.outputs.items():
             outputs[key] = execution.outputs.get(key, as_type=type_)
-            # try:
-            #     outputs[key] = execution.outputs.get(key)
-            # except ValueError:
-            #     outputs[key] = execution.outputs.get(key, as_type=type_)
 
         node = AsyncNode(task_name, execution.id, url, inputs=kwargs, outputs=outputs)
         self.async_graph.set_node(node)
@@ -134,19 +130,10 @@ class AsyncGraph:
             }
             for node in self.call_stack
         ])
-        
-
-
-def async_output(output: Any, task, execution):
-    # TODO: inject flyte metadata to trace data being passed from one task to the next.
-    output.__flyte_async_metadata__ = {
-        "task": task,
-        "execution": execution,
-    }
 
 
 @contextmanager
-def eager_mode(fn, remote: FlyteRemote, ctx: FlyteContext, async_graph: dict, force_remote: bool):
+def eager_mode(fn, remote: FlyteRemote, ctx: FlyteContext, async_graph: dict):
 
     _original_cache = {}
     _globals = fn.__globals__
@@ -155,7 +142,7 @@ def eager_mode(fn, remote: FlyteRemote, ctx: FlyteContext, async_graph: dict, fo
     for k, v in _globals.items():
         if isinstance(v, PythonTask):
             _original_cache[k] = v
-            _globals[k] = AsyncEntity(v, remote, ctx, async_graph, force_remote=force_remote)
+            _globals[k] = AsyncEntity(v, remote, ctx, async_graph)
 
     yield
 
@@ -223,11 +210,13 @@ def eager(
     _fn=None,
     *,
     remote: FlyteRemote,
-    force_remote: bool = False,  # this argument is purely for testing!
     **kwargs,
 ):
     if _fn is None:
-        return partial(eager, remote=remote, force_remote=force_remote, **kwargs)
+        return partial(eager, remote=remote, **kwargs)
+    
+    if secret_requests is None:
+        secret_requests=[Secret(group=SECRET_GROUP, key=SECRET_KEY)]
 
     @wraps(_fn)
     async def wrapper(*args, **kws):
@@ -236,14 +225,14 @@ def eager(
         exec_params = ctx.user_space_params
         parent_node = AsyncNode(exec_params.task_id, exec_params.execution_id, inputs=kws, outputs={})
         async_graph = AsyncGraph(parent_node)
-        with eager_mode(_fn, remote, ctx, async_graph, force_remote):
+        with eager_mode(_fn, remote, ctx, async_graph):
             out = await _fn(*args, **kws)
         # need to await for _fn to complete, then invoke the deck
         await render_deck(out, async_graph)
         return out
     
     wrapper.__is_eager__ = True  #  HACK!
-    return task(wrapper, **kwargs)
+    return task(wrapper, secret_requests=secret_requests, **kwargs)
 
 
 def prepare_remote(remote: Optional[FlyteRemote], ctx: FlyteContext, force_remote: bool) -> Optional[FlyteRemote]:
@@ -275,6 +264,7 @@ def internal_demo_remote(remote: FlyteRemote) -> FlyteRemote:
                 endpoint="flyte-sandbox.flyte:8089",
                 insecure=True,
                 auth_mode="Pkce",
+                client_id=remote.config.platform.client_id,
             ),
             data_config=DataConfig(
                 s3=S3Config(
@@ -292,7 +282,7 @@ def internal_demo_remote(remote: FlyteRemote) -> FlyteRemote:
 def internal_remote(remote: FlyteRemote) -> FlyteRemote:
     """Derives a FlyteRemote object from a yaml configuration file, modifying parts to make it work internally."""
     secrets_manager = current_context().secrets
-    client_secret = secrets_manager.get("async-client-secret", "client_secret")
+    client_secret = secrets_manager.get(SECRET_GROUP, SECRET_KEY)
     # get the raw output prefix from the context that's set from the pyflyte-execute entrypoint
     # (see flytekit/bin/entrypoint.py)
     ctx = FlyteContextManager.current_context()
