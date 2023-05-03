@@ -215,8 +215,7 @@ def eager(
     if _fn is None:
         return partial(eager, remote=remote, **kwargs)
     
-    if secret_requests is None:
-        secret_requests=[Secret(group=SECRET_GROUP, key=SECRET_KEY)]
+    kwargs.pop("secret_requests", None)
 
     @wraps(_fn)
     async def wrapper(*args, **kws):
@@ -232,7 +231,7 @@ def eager(
         return out
     
     wrapper.__is_eager__ = True  #  HACK!
-    return task(wrapper, secret_requests=secret_requests, **kwargs)
+    return task(wrapper, secret_requests=[Secret(group=SECRET_GROUP, key=SECRET_KEY)], **kwargs)
 
 
 def prepare_remote(remote: Optional[FlyteRemote], ctx: FlyteContext, force_remote: bool) -> Optional[FlyteRemote]:
