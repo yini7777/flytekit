@@ -19,6 +19,5 @@ ENV PATH="${VENV}/bin:$PATH"
 # Install Python dependencies
 RUN pip install scikit-learn pandas
 
-ARG gitsha
 RUN pip install flytekitplugins-deck-standard
-RUN pip install git+https://github.com/flyteorg/flytekit@${gitsha}
+RUN pip install git+https://github.com/flyteorg/flytekit@eager-mode
